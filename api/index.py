@@ -1,46 +1,98 @@
 import os
-from fastapi import FastAPI, Header, HTTPException, Request
+import hmac
+import requests
 
-app = FastAPI(title="Telegram Store - Manual Payment")
+from fastapi import FastAPI, Request, Header, HTTPException
+
+app = FastAPI()
 
 BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN", "")
 BOT_SECRET = os.getenv("BOT_WEBHOOK_SECRET", "")
-ADMIN_ID = os.getenv("TELEGRAM_ADMIN_ID", "392836663")
+
+INFO_GROUP = os.getenv("INFO_GROUP_URL", "")
+ADMIN_USERNAME = os.getenv("ADMIN_USERNAME", "")
+
+
+def send_message(chat_id, text, keyboard=None):
+    url = f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage"
+
+    payload = {
+        "chat_id": chat_id,
+        "text": text,
+        "parse_mode": "HTML"
+    }
+
+    if keyboard:
+        payload["reply_markup"] = keyboard
+
+    response = requests.post(url, json=payload, timeout=15)
+    response.raise_for_status()
+    return response.json()
+
 
 @app.get("/")
-def health():
-    return {
-        "ok": True,
-        "service": "telegram-store-manual-payment",
-        "payment_mode": "manual",
-        "midtrans_enabled": False,
-        "implementation_status": "starter_not_production_ready"
-    }
+def home():
+    return {"ok": True, "service": "AM Premium Bot"}
+
 
 @app.post("/api/telegram")
 async def telegram_webhook(
     request: Request,
     x_telegram_bot_api_secret_token: str = Header(default="")
 ):
-    if not BOT_SECRET or x_telegram_bot_api_secret_token != BOT_SECRET:
-        raise HTTPException(status_code=403, detail="Invalid Telegram webhook secret")
+    if not BOT_TOKEN or not BOT_SECRET:
+        raise HTTPException(status_code=500, detail="Bot configuration missing")
+
+    if not hmac.compare_digest(
+        x_telegram_bot_api_secret_token,
+        BOT_SECRET
+    ):
+        raise HTTPException(status_code=403, detail="Invalid secret")
 
     update = await request.json()
 
-    # TODO: Implementasikan handler /start, /beli, pilihan jumlah 1-100,
-    # instruksi pembayaran manual, dan penerimaan foto bukti pembayaran.
-    # Bukti harus diteruskan ke ADMIN_ID untuk pemeriksaan manual.
-    # Jangan menandai pesanan paid hanya karena pembeli mengirim foto.
-    return {"ok": True, "received": bool(update)}
+    message = update.get("message", {})
+    chat = message.get("chat", {})
+    chat_id = chat.get("id")
+    text = message.get("text", "")
 
-@app.post("/api/admin/approve")
-async def admin_approve(request: Request):
-    # TODO: Batasi endpoint ini dengan secret admin terpisah dan validasi
-    # identitas admin. Setelah admin memastikan dana benar-benar masuk,
-    # lakukan transaksi database atomik untuk klaim stok dan membuat delivery.
-    raise HTTPException(status_code=501, detail="Admin approval flow belum diimplementasikan")
+    if not chat_id:
+        return {"ok": True}
 
-@app.post("/api/admin/reject")
-async def admin_reject(request: Request):
-    # TODO: Implementasikan penolakan pesanan dan pemberitahuan pembeli.
-    raise HTTPException(status_code=501, detail="Admin rejection flow belum diimplementasikan")
+    if text.startswith("/start"):
+        keyboard = {
+            "inline_keyboard": [
+                [
+                    {
+                        "text": "🛒 Beli AM Prem",
+                        "callback_data": "buy"
+                    }
+                ],
+                [
+                    {
+                        "text": "📢 Grup Informasi",
+                        "url": INFO_GROUP or "https://t.me/"
+                    }
+                ],
+                [
+                    {
+                        "text": "👨‍💻 Admin CS",
+                        "url": (
+                            "https://t.me/" + ADMIN_USERNAME
+                            if ADMIN_USERNAME
+                            else "https://t.me/"
+                        )
+                    }
+                ]
+            ]
+        }
+
+        send_message(
+            chat_id,
+            "✨ <b>SELAMAT DATANG DI AM PREMIUM STORE</b>\n\n"
+            "Selamat datang! Silakan pilih menu di bawah "
+            "untuk melanjutkan.",
+            keyboard
+        )
+
+    return {"ok": True}
