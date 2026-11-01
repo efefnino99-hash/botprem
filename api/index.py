@@ -568,6 +568,14 @@ async def telegram_webhook(request: Request):
         "X-Telegram-Bot-Api-Secret-Token", ""
     ).strip()
 
+    logger.info(
+        "Webhook masuk; secret_header_present=%s; secret_match=%s",
+        bool(received_secret),
+        bool(BOT_SECRET) and hmac.compare_digest(
+            received_secret, BOT_SECRET
+        )
+    )
+
     if not BOT_SECRET:
         logger.error("BOT_WEBHOOK_SECRET belum diatur")
         raise HTTPException(
@@ -589,4 +597,4 @@ async def telegram_webhook(request: Request):
         return JSONResponse(
             {"ok": False, "error": "Internal server error"},
             status_code=500
-    )
+        )
