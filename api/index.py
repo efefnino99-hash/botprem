@@ -676,16 +676,51 @@ async def telegram_webhook(request: Request):
 
     if not hmac.compare_digest(received_secret, BOT_SECRET):
         logger.warning("Webhook secret tidak cocok")
-        raise HTTPException(status_code=403, detail="Forbidden")
+        raise HTTPException(
+            status_code=403,
+            detail="Forbidden"
+        )
+
+    update_id = None
 
     try:
         update = await request.json()
+        update_id = update.get("update_id")
+
+        # Cegah update Telegram yang sama diproses dua kali.
+        if update_id is not None:
+            is_new = await claim_telegram_update(int(update_id))
+
+            if not is_new:
+                logger.info(
+                    "Update duplikat diabaikan: %s",
+                    update_id
+                )
+                return JSONResponse({"ok": True})
+
+        # Proses update Telegram.
         await process_update(update)
+
         return JSONResponse({"ok": True})
 
     except Exception:
         logger.exception("Gagal memproses update Telegram")
+
+        # Hapus klaim agar Telegram dapat mencoba ulang
+        # jika pemrosesan sebelumnya gagal.
+        if update_id is not None:
+            try:
+                await release_telegram_update(int(update_id))
+            except Exception:
+                logger.exception(
+                    "Gagal menghapus klaim update: %s",
+                    update_id
+                )
+
         return JSONResponse(
-            {"ok": False, "error": "Internal server error"},
+            {
+                "ok": False,
+                "error": "Internal server error"
+            },
             status_code=500
-    )
+        )
