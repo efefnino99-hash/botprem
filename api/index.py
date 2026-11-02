@@ -999,70 +999,47 @@ async def handle_admin_decision(
 
     try:
 
-        result = await db_rpc(
-            "approve_order_from_inventory",
-            {
-                "p_order_id": str(order_id)
-            }
-        )
+    result = await db_rpc(
+        "approve_order_from_inventory",
+        {
+            "p_order_id": str(order_id)
+        }
+    )
 
-        # Antisipasi hasil RPC berbentuk list.
-        if isinstance(result, list):
-            result = result[0] if result else None
+    # Antisipasi hasil RPC berbentuk list.
+    if isinstance(result, list):
+        result = result[0] if result else None
 
-    except Exception:
-        logger.exception(
-            "RPC alokasi inventaris gagal: %s",
-            order_id
-        )
+except Exception:
+    logger.exception(
+        "RPC alokasi inventaris gagal: %s",
+        order_id
+    )
 
-        return await send_message(
-            chat_id,
-            "⚠️ <b>GAGAL MEMPROSES PESANAN</b>\n\n"
-            "Database tidak berhasil mengalokasikan stok.\n"
-            "Silakan periksa log Vercel dan Supabase."
-        )
+    return await send_message(
+        chat_id,
+        "⚠️ <b>GAGAL MEMPROSES PESANAN</b>\n\n"
+        "Database tidak berhasil mengalokasikan stok.\n"
+        "Silakan periksa log Vercel dan Supabase."
+    )
 
-    if not isinstance(result, dict):
-        return await send_message(
-            chat_id,
-            "⚠️ Respons database tidak valid."
-        )
+# TAMBAHKAN KODE LOG DI SINI
+logger.info(
+    "HASIL RPC APPROVE: order=%s success=%s message=%s account_count=%s",
+    order_id,
+    result.get("success") if isinstance(result, dict) else None,
+    result.get("message") if isinstance(result, dict) else None,
+    len(result.get("accounts", []))
+    if isinstance(result, dict)
+    and isinstance(result.get("accounts"), list)
+    else 0
+)
 
-    if not result.get("success"):
-
-        reason = result.get(
-            "message",
-            "Proses persetujuan gagal"
-        )
-
-        return await send_message(
-            chat_id,
-            "❌ <b>GAGAL MEMPROSES PESANAN</b>\n\n"
-            f"{html.escape(str(reason))}"
-        )
-
-    accounts = result.get("accounts", [])
-
-    if not accounts:
-        return await send_message(
-            chat_id,
-            "⚠️ Data akun kosong.\n"
-            "Silakan periksa tabel am_inventory."
-        )
-
-    # Pastikan jumlah akun sesuai pesanan.
-    if len(accounts) != int(order["quantity"]):
-        logger.error(
-            "Jumlah akun tidak sesuai. Order=%s",
-            order_id
-        )
-
-        return await send_message(
-            chat_id,
-            "⚠️ Jumlah akun yang dialokasikan tidak sesuai "
-            "dengan jumlah pesanan. Hubungi pengelola."
-        )
+if not isinstance(result, dict):
+    return await send_message(
+        chat_id,
+        "⚠️ Respons database tidak valid."
+    )
 
     # =====================================================
     # KIRIM AKUN KE PEMBELI
