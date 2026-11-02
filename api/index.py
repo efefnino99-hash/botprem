@@ -399,7 +399,7 @@ async def handle_start(chat_id: int):
                     "url": (
                         f"https://t.me/{ADMIN_USERNAME}"
                         if ADMIN_USERNAME
-                        else "https://t.me/"
+                        else "https://t.me/kramtzy1"
                     )
                 }
             ]
