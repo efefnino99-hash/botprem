@@ -12,6 +12,12 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("am-premium-bot")
 
 app = FastAPI(title="AM Premium Telegram Bot")
+@app.get("/api/telegram")
+async def telegram_test():
+    return {
+        "ok": True,
+        "message": "Endpoint Telegram aktif"
+    }
 
 BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN", "").strip()
 BOT_SECRET = os.getenv("BOT_WEBHOOK_SECRET", "").strip()
@@ -563,6 +569,7 @@ async def home():
 
 
 @app.post("/")
+@app.post("/api/telegram")
 async def telegram_webhook(request: Request):
     received_secret = request.headers.get(
         "X-Telegram-Bot-Api-Secret-Token", ""
