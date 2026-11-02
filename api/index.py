@@ -1,3 +1,4 @@
+
 import os
 import hmac
 import logging
@@ -12,12 +13,15 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("am-premium-bot")
 
 app = FastAPI(title="AM Premium Telegram Bot")
+
+
 @app.get("/api/telegram")
 async def telegram_test():
     return {
         "ok": True,
         "message": "Endpoint Telegram aktif"
     }
+
 
 BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN", "").strip()
 BOT_SECRET = os.getenv("BOT_WEBHOOK_SECRET", "").strip()
@@ -191,6 +195,23 @@ async def db_rpc(function_name: str, body: dict):
     return response.json()
 
 
+# Fungsi untuk mencegah update Telegram diproses dua kali.
+async def claim_telegram_update(update_id: int) -> bool:
+    result = await db_rpc(
+        "claim_telegram_update",
+        {"p_update_id": update_id}
+    )
+    return result is True
+
+
+# Fungsi untuk melepas klaim update jika pemrosesan gagal.
+async def release_telegram_update(update_id: int):
+    return await db_rpc(
+        "release_telegram_update",
+        {"p_update_id": update_id}
+    )
+
+
 async def create_order(user_id: str, username: str, quantity: int):
     total = quantity * PRICE
 
@@ -290,11 +311,13 @@ async def handle_buy(chat_id: int):
 
     buttons = []
     row = []
+
     for quantity in available:
         row.append({
             "text": f"{quantity} akun",
             "callback_data": f"quantity_{quantity}"
         })
+
         if len(row) == 3:
             buttons.append(row)
             row = []
@@ -306,6 +329,7 @@ async def handle_buy(chat_id: int):
         "text": "✍️ Masukkan jumlah lain",
         "callback_data": "quantity_custom"
     }])
+
     buttons.append([{
         "text": "⬅️ Kembali ke Menu",
         "callback_data": "home"
@@ -389,20 +413,20 @@ async def handle_quantity(message: dict):
     )
 
     if PAYMENT_QR_IMAGE_URL:
-    try:
-        await send_photo(
-            chat_id,
-            PAYMENT_QR_IMAGE_URL,
-            "📷 <b>QRIS PEMBAYARAN</b>\n\n"
-            "Scan QRIS ini dan bayar sesuai total pesanan."
-        )
-    except Exception:
-        logger.exception("Gagal mengirim foto QRIS")
-        await send_message(
-            chat_id,
-            "⚠️ Foto QRIS gagal dikirim. "
-            "Silakan hubungi admin."
-        )
+        try:
+            await send_photo(
+                chat_id,
+                PAYMENT_QR_IMAGE_URL,
+                "📷 <b>QRIS PEMBAYARAN</b>\n\n"
+                "Scan QRIS ini dan bayar sesuai total pesanan."
+            )
+        except Exception:
+            logger.exception("Gagal mengirim foto QRIS")
+            await send_message(
+                chat_id,
+                "⚠️ Foto QRIS gagal dikirim. "
+                "Silakan hubungi admin."
+            )
 
 
 async def handle_paid(callback: dict, order_id: str):
@@ -540,7 +564,10 @@ async def handle_admin_decision(callback: dict, approve: bool, order_id: str):
     )
 
     if not result or not result.get("success"):
-        reason = result.get("message", "Stok tidak tersedia") if result else "Proses gagal"
+        reason = (
+            result.get("message", "Stok tidak tersedia")
+            if result else "Proses gagal"
+        )
         return await send_message(chat_id, f"❌ {reason}")
 
     accounts = result.get("accounts", [])
@@ -595,6 +622,7 @@ async def handle_callback(callback: dict):
 
     if data.startswith("quantity_"):
         quantity = data[len("quantity_"):]
+
         if not quantity.isdigit():
             return await send_message(chat_id, "Jumlah tidak valid.")
 
@@ -604,6 +632,7 @@ async def handle_callback(callback: dict):
             "from": callback.get("from", {}),
             "text": quantity
         }
+
         return await handle_quantity(synthetic_message)
 
     if data.startswith("paid_"):
