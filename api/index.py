@@ -501,6 +501,7 @@ async def handle_paid(callback: dict, order_id: str):
 
 
 # PERBAIKAN: Penerimaan foto dan pencegahan bukti ganda.
+
 async def handle_photo(message: dict):
     chat_id = message["chat"]["id"]
     user_id = str(message["from"]["id"])
@@ -508,7 +509,10 @@ async def handle_photo(message: dict):
     photos = message.get("photo", [])
 
     if not photos:
-        return await send_message(chat_id, "Foto bukti tidak ditemukan.")
+        return await send_message(
+            chat_id,
+            "Foto bukti tidak ditemukan."
+        )
 
     file_id = photos[-1]["file_id"]
 
@@ -524,15 +528,121 @@ async def handle_photo(message: dict):
     order_id = order["id"]
     status = order.get("status")
 
-    # Jika bukti sebelumnya sudah diterima, jangan kirim ulang ke admin.
+    # Jika sudah menunggu verifikasi, coba kirim ulang
+    # bukti yang tersimpan ke admin.
     if status == "waiting_review":
+        saved_file_id = order.get("proof_file_id") or file_id
+
+        if not order.get("proof_file_id"):
+            await db_request(
+                "PATCH",
+                "orders",
+                params={
+                    "id": f"eq.{order_id}",
+                    "status": "eq.waiting_review"
+                },
+                body={"proof_file_id": saved_file_id}
+            )
+
+        file_id = saved_file_id
+
+    elif status == "waiting_payment":
+        # Ubah status hanya jika masih menunggu pembayaran.
+        updated_rows = await db_request(
+            "PATCH",
+            "orders",
+            params={
+                "id": f"eq.{order_id}",
+                "user_id": f"eq.{user_id}",
+                "status": "eq.waiting_payment"
+            },
+            body={
+                "status": "waiting_review",
+                "proof_file_id": file_id
+            }
+        )
+
+        if not updated_rows:
+            latest_order = await get_order(str(order_id))
+
+            if not latest_order:
+                return await send_message(
+                    chat_id,
+                    "Pesanan tidak ditemukan."
+                )
+
+            if latest_order.get("status") == "waiting_review":
+                file_id = latest_order.get("proof_file_id") or file_id
+                order = latest_order
+            else:
+                return await send_message(
+                    chat_id,
+                    "Status pesanan berubah. Silakan hubungi admin."
+                )
+        else:
+            order = updated_rows[0]
+
+    else:
         return await send_message(
             chat_id,
-            "✅ <b>BUKTI PEMBAYARAN SUDAH DITERIMA</b>\n\n"
-            f"🆔 ID Pesanan: <code>{order_id}</code>\n"
-            "Bukti pembayaran Anda sedang menunggu pemeriksaan admin.\n"
-            "Tidak perlu mengirim ulang bukti transfer."
+            "Pesanan ini tidak sedang menunggu pembayaran.\n"
+            "Silakan hubungi admin jika status pesanan tidak sesuai."
         )
+
+    keyboard = {
+        "inline_keyboard": [
+            [
+                {
+                    "text": "💰 DANA MASUK",
+                    "callback_data": f"approve_{order_id}"
+                },
+                {
+                    "text": "❌ DANA TIDAK MASUK",
+                    "callback_data": f"reject_{order_id}"
+                }
+            ]
+        ]
+    }
+
+    try:
+        await send_photo(
+            ADMIN_ID,
+            file_id,
+            "<b>🔔 BUKTI PEMBAYARAN AM PREMIUM</b>\n\n"
+            f"🆔 ID Pesanan: <code>{order_id}</code>\n"
+            f"👤 Username: "
+            f"@{message.get('from', {}).get('username', 'Tidak tersedia')}\n"
+            f"🪪 User ID: <code>{user_id}</code>\n"
+            f"📦 Jumlah akun: <b>{order['quantity']}</b>\n"
+            f"💰 Total pembayaran: "
+            f"<b>Rp{int(order['total']):,}</b>\n\n"
+            "<i>Silakan periksa bukti transfer sebelum memilih keputusan.</i>",
+            keyboard
+        )
+
+    except Exception as e:
+        logger.exception(
+            "Gagal mengirim bukti ke admin. Order ID: %s",
+            order_id
+        )
+
+        return await send_message(
+            chat_id,
+            "⚠️ <b>Bukti transfer sudah tersimpan.</b>\n\n"
+            "Namun bot belum berhasil mengirim notifikasi ke admin.\n"
+            "Silakan pastikan admin sudah menekan /start pada bot.\n\n"
+            "Anda boleh kirim ulang foto bukti transfer untuk "
+            "mencoba mengirim notifikasi kembali."
+        )
+
+    await send_message(
+        chat_id,
+        "✅ <b>Bukti pembayaran berhasil dikirim.</b>\n\n"
+        "Bukti sudah diteruskan kepada admin.\n"
+        "Admin akan memeriksa pembayaran Anda.\n"
+        "Mohon tunggu verifikasi."
+    )
+
 
     if status != "waiting_payment":
         return await send_message(
