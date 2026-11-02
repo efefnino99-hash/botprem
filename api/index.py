@@ -9,7 +9,7 @@ import httpx
 from fastapi import FastAPI, Request, HTTPException
 from fastapi.responses import JSONResponse
 
-app = FastAPI()
+
 # =========================================================
 # LOGGING & FASTAPI
 # =========================================================
@@ -109,6 +109,10 @@ async def telegram(method: str, payload: dict):
     try:
         result = response.json()
     except Exception:
+        logger.error(
+            "Respons Telegram tidak valid: %s",
+            response.text
+        )
         raise RuntimeError(
             "Respons Telegram tidak valid"
         )
@@ -247,8 +251,9 @@ async def db_rpc(
 
     if response.status_code >= 400:
         logger.error(
-            "Supabase RPC error [%s]: %s",
+            "Supabase RPC error [%s] function=%s: %s",
             response.status_code,
+            function_name,
             response.text
         )
 
@@ -420,6 +425,7 @@ async def handle_buy(chat_id: int):
 
     try:
         stock = await available_inventory_count()
+
     except Exception:
         logger.exception(
             "Gagal membaca stok inventaris"
@@ -531,6 +537,7 @@ async def handle_quantity(message: dict):
 
     try:
         stock = await available_inventory_count()
+
     except Exception:
         logger.exception(
             "Gagal memeriksa stok"
@@ -556,6 +563,7 @@ async def handle_quantity(message: dict):
             username,
             quantity
         )
+
     except Exception:
         logger.exception(
             "Gagal membuat pesanan"
@@ -588,6 +596,7 @@ async def handle_quantity(message: dict):
             f"🧮 Total: <b>Rp{total:,}</b>\n\n"
             "<i>Status: Menunggu pembayaran.</i>"
         )
+
     except Exception:
         logger.exception(
             "Gagal mengirim notifikasi pesanan kepada admin"
@@ -637,6 +646,7 @@ async def handle_quantity(message: dict):
                 "📷 <b>QRIS PEMBAYARAN</b>\n\n"
                 "Scan QRIS dan bayar sesuai total pesanan."
             )
+
         except Exception:
             logger.exception(
                 "Gagal mengirim foto QRIS"
@@ -780,6 +790,7 @@ async def handle_photo(message: dict):
             ):
                 order = latest
                 file_id = latest["proof_file_id"]
+
             else:
                 return await send_message(
                     chat_id,
@@ -880,7 +891,10 @@ async def send_order_accounts(
 
         lines = []
 
-        for index, item in enumerate(chunk, start=start + 1):
+        for index, item in enumerate(
+            chunk,
+            start=start + 1
+        ):
 
             email = html.escape(
                 str(item.get("email", ""))
@@ -999,47 +1013,89 @@ async def handle_admin_decision(
 
     try:
 
-    result = await db_rpc(
-        "approve_order_from_inventory",
-        {
-            "p_order_id": str(order_id)
-        }
+        result = await db_rpc(
+            "approve_order_from_inventory",
+            {
+                "p_order_id": str(order_id)
+            }
+        )
+
+        # Antisipasi hasil RPC berbentuk list.
+        if isinstance(result, list):
+            result = result[0] if result else None
+
+    except Exception:
+        logger.exception(
+            "RPC alokasi inventaris gagal: %s",
+            order_id
+        )
+
+        return await send_message(
+            chat_id,
+            "⚠️ <b>GAGAL MEMPROSES PESANAN</b>\n\n"
+            "Database tidak berhasil mengalokasikan stok.\n"
+            "Silakan periksa log Vercel dan Supabase."
+        )
+
+    # Catat hasil RPC tanpa mencatat isi akun.
+    logger.info(
+        "HASIL RPC APPROVE: order=%s success=%s message=%s account_count=%s",
+        order_id,
+        result.get("success") if isinstance(result, dict) else None,
+        result.get("message") if isinstance(result, dict) else None,
+        len(result.get("accounts", []))
+        if isinstance(result, dict)
+        and isinstance(result.get("accounts"), list)
+        else 0
     )
 
-    # Antisipasi hasil RPC berbentuk list.
-    if isinstance(result, list):
-        result = result[0] if result else None
+    if not isinstance(result, dict):
+        return await send_message(
+            chat_id,
+            "⚠️ Respons database tidak valid."
+        )
 
-except Exception:
-    logger.exception(
-        "RPC alokasi inventaris gagal: %s",
-        order_id
-    )
+    if not result.get("success"):
 
-    return await send_message(
-        chat_id,
-        "⚠️ <b>GAGAL MEMPROSES PESANAN</b>\n\n"
-        "Database tidak berhasil mengalokasikan stok.\n"
-        "Silakan periksa log Vercel dan Supabase."
-    )
+        reason = result.get(
+            "message",
+            "Proses persetujuan gagal"
+        )
 
-# TAMBAHKAN KODE LOG DI SINI
-logger.info(
-    "HASIL RPC APPROVE: order=%s success=%s message=%s account_count=%s",
-    order_id,
-    result.get("success") if isinstance(result, dict) else None,
-    result.get("message") if isinstance(result, dict) else None,
-    len(result.get("accounts", []))
-    if isinstance(result, dict)
-    and isinstance(result.get("accounts"), list)
-    else 0
-)
+        return await send_message(
+            chat_id,
+            "❌ <b>GAGAL MEMPROSES PESANAN</b>\n\n"
+            f"{html.escape(str(reason))}"
+        )
 
-if not isinstance(result, dict):
-    return await send_message(
-        chat_id,
-        "⚠️ Respons database tidak valid."
-    )
+    accounts = result.get("accounts", [])
+
+    if not isinstance(accounts, list) or not accounts:
+        logger.error(
+            "Data akun kosong atau tidak valid. Order=%s",
+            order_id
+        )
+
+        return await send_message(
+            chat_id,
+            "⚠️ Data akun kosong atau tidak valid.\n"
+            "Silakan periksa tabel am_inventory dan am_order_deliveries."
+        )
+
+    # Pastikan jumlah akun sesuai pesanan.
+    if len(accounts) != int(order["quantity"]):
+        logger.error(
+            "Jumlah akun tidak sesuai. Order=%s expected=%s actual=%s",
+            order_id,
+            order["quantity"],
+            len(accounts)
+        )
+
+        return await send_message(
+            chat_id,
+            "⚠️ Jumlah akun yang dialokasikan tidak sesuai "
+            "dengan jumlah pesanan. Hubungi pengelola."
+        )
 
     # =====================================================
     # KIRIM AKUN KE PEMBELI
@@ -1104,6 +1160,7 @@ async def handle_callback(callback: dict):
             callback_id,
             "Diproses..."
         )
+
     except Exception:
         logger.exception(
             "Gagal menjawab callback Telegram"
