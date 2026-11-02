@@ -1,13 +1,18 @@
 
 import os
 import hmac
+import html
 import logging
-from decimal import Decimal
 from typing import Any
 
 import httpx
 from fastapi import FastAPI, Request, HTTPException
 from fastapi.responses import JSONResponse
+
+
+# =========================================================
+# LOGGING & FASTAPI
+# =========================================================
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("am-premium-bot")
@@ -15,32 +20,47 @@ logger = logging.getLogger("am-premium-bot")
 app = FastAPI(title="AM Premium Telegram Bot")
 
 
-@app.get("/api/telegram")
-async def telegram_test():
-    return {
-        "ok": True,
-        "message": "Endpoint Telegram aktif"
-    }
-
+# =========================================================
+# KONFIGURASI
+# =========================================================
 
 BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN", "").strip()
 BOT_SECRET = os.getenv("BOT_WEBHOOK_SECRET", "").strip()
-ADMIN_ID = str(os.getenv("TELEGRAM_ADMIN_ID", "392836663")).strip()
 
-SUPABASE_URL = os.getenv("SUPABASE_URL", "").rstrip("/")
-SUPABASE_KEY = os.getenv("SUPABASE_SERVICE_ROLE_KEY", "").strip()
+ADMIN_ID = str(
+    os.getenv("TELEGRAM_ADMIN_ID", "392836663")
+).strip()
 
-PRICE = int(os.getenv("PRICE_PER_UNIT", "5000"))
+SUPABASE_URL = os.getenv(
+    "SUPABASE_URL", ""
+).rstrip("/")
+
+SUPABASE_KEY = os.getenv(
+    "SUPABASE_SERVICE_ROLE_KEY", ""
+).strip()
+
+PRICE = int(os.getenv("PRICE_PER_UNIT", "10000"))
 MIN_QUANTITY = int(os.getenv("MIN_QUANTITY", "1"))
 MAX_QUANTITY = int(os.getenv("MAX_QUANTITY", "100"))
+
+PRODUCT_NAME = "AM Premium"
 
 PAYMENT_INSTRUCTIONS = os.getenv(
     "PAYMENT_INSTRUCTIONS",
     "Silakan bayar melalui QRIS yang dikirimkan."
 )
-PAYMENT_QR_IMAGE_URL = os.getenv("PAYMENT_QR_IMAGE_URL", "").strip()
-INFO_GROUP_URL = os.getenv("INFO_GROUP_URL", "https://t.me/").strip()
-ADMIN_USERNAME = os.getenv("ADMIN_USERNAME", "").strip().lstrip("@")
+
+PAYMENT_QR_IMAGE_URL = os.getenv(
+    "PAYMENT_QR_IMAGE_URL", ""
+).strip()
+
+INFO_GROUP_URL = os.getenv(
+    "INFO_GROUP_URL", "https://t.me/"
+).strip()
+
+ADMIN_USERNAME = os.getenv(
+    "ADMIN_USERNAME", ""
+).strip().lstrip("@")
 
 TELEGRAM_API = (
     f"https://api.telegram.org/bot{BOT_TOKEN}"
@@ -48,23 +68,34 @@ TELEGRAM_API = (
 )
 
 
+# =========================================================
+# VALIDASI KONFIGURASI
+# =========================================================
+
 def check_config():
     missing = []
 
-    for name, value in [
-        ("TELEGRAM_BOT_TOKEN", BOT_TOKEN),
-        ("BOT_WEBHOOK_SECRET", BOT_SECRET),
-        ("SUPABASE_URL", SUPABASE_URL),
-        ("SUPABASE_SERVICE_ROLE_KEY", SUPABASE_KEY),
-    ]:
+    required = {
+        "TELEGRAM_BOT_TOKEN": BOT_TOKEN,
+        "BOT_WEBHOOK_SECRET": BOT_SECRET,
+        "SUPABASE_URL": SUPABASE_URL,
+        "SUPABASE_SERVICE_ROLE_KEY": SUPABASE_KEY,
+    }
+
+    for name, value in required.items():
         if not value:
             missing.append(name)
 
     if missing:
         raise RuntimeError(
-            "Environment variable belum diatur: " + ", ".join(missing)
+            "Environment variable belum diatur: "
+            + ", ".join(missing)
         )
 
+
+# =========================================================
+# TELEGRAM API
+# =========================================================
 
 async def telegram(method: str, payload: dict):
     check_config()
@@ -78,11 +109,16 @@ async def telegram(method: str, payload: dict):
     try:
         result = response.json()
     except Exception:
-        raise RuntimeError("Respons Telegram tidak valid")
+        raise RuntimeError(
+            "Respons Telegram tidak valid"
+        )
 
     if response.status_code != 200 or not result.get("ok"):
         raise RuntimeError(
-            result.get("description", "Telegram API gagal")
+            result.get(
+                "description",
+                "Telegram API gagal"
+            )
         )
 
     return result.get("result")
@@ -96,13 +132,17 @@ async def send_message(
     payload = {
         "chat_id": chat_id,
         "text": text,
-        "parse_mode": "HTML"
+        "parse_mode": "HTML",
+        "disable_web_page_preview": True
     }
 
     if reply_markup:
         payload["reply_markup"] = reply_markup
 
-    return await telegram("sendMessage", payload)
+    return await telegram(
+        "sendMessage",
+        payload
+    )
 
 
 async def send_photo(
@@ -121,10 +161,16 @@ async def send_photo(
     if reply_markup:
         payload["reply_markup"] = reply_markup
 
-    return await telegram("sendPhoto", payload)
+    return await telegram(
+        "sendPhoto",
+        payload
+    )
 
 
-async def answer_callback(callback_id: str, text: str):
+async def answer_callback(
+    callback_id: str,
+    text: str = "Diproses..."
+):
     return await telegram(
         "answerCallbackQuery",
         {
@@ -133,6 +179,10 @@ async def answer_callback(callback_id: str, text: str):
         }
     )
 
+
+# =========================================================
+# SUPABASE DATABASE
+# =========================================================
 
 async def db_request(
     method: str,
@@ -160,8 +210,15 @@ async def db_request(
         )
 
     if response.status_code >= 400:
-        logger.error("Supabase error: %s", response.text)
-        raise RuntimeError("Database Supabase mengalami kesalahan")
+        logger.error(
+            "Supabase error [%s]: %s",
+            response.status_code,
+            response.text
+        )
+
+        raise RuntimeError(
+            "Database Supabase mengalami kesalahan"
+        )
 
     if not response.text:
         return []
@@ -169,7 +226,10 @@ async def db_request(
     return response.json()
 
 
-async def db_rpc(function_name: str, body: dict):
+async def db_rpc(
+    function_name: str,
+    body: dict
+):
     check_config()
 
     headers = {
@@ -178,7 +238,7 @@ async def db_rpc(function_name: str, body: dict):
         "Content-Type": "application/json"
     }
 
-    async with httpx.AsyncClient(timeout=30) as client:
+    async with httpx.AsyncClient(timeout=60) as client:
         response = await client.post(
             f"{SUPABASE_URL}/rest/v1/rpc/{function_name}",
             json=body,
@@ -186,8 +246,15 @@ async def db_rpc(function_name: str, body: dict):
         )
 
     if response.status_code >= 400:
-        logger.error("Supabase RPC error: %s", response.text)
-        raise RuntimeError("Proses database gagal")
+        logger.error(
+            "Supabase RPC error [%s]: %s",
+            response.status_code,
+            response.text
+        )
+
+        raise RuntimeError(
+            "Proses database gagal"
+        )
 
     if not response.text:
         return None
@@ -195,22 +262,44 @@ async def db_rpc(function_name: str, body: dict):
     return response.json()
 
 
-async def claim_telegram_update(update_id: int) -> bool:
+# =========================================================
+# WEBHOOK UPDATE PROTECTION
+# =========================================================
+
+async def claim_telegram_update(
+    update_id: int
+) -> bool:
+
     result = await db_rpc(
         "claim_telegram_update",
-        {"p_update_id": update_id}
+        {
+            "p_update_id": update_id
+        }
     )
+
     return result is True
 
 
-async def release_telegram_update(update_id: int):
+async def release_telegram_update(
+    update_id: int
+):
     return await db_rpc(
         "release_telegram_update",
-        {"p_update_id": update_id}
+        {
+            "p_update_id": update_id
+        }
     )
 
 
-async def create_order(user_id: str, username: str, quantity: int):
+# =========================================================
+# ORDER MANAGEMENT
+# =========================================================
+
+async def create_order(
+    user_id: str,
+    username: str,
+    quantity: int
+):
     total = quantity * PRICE
 
     rows = await db_request(
@@ -226,7 +315,9 @@ async def create_order(user_id: str, username: str, quantity: int):
     )
 
     if not rows:
-        raise RuntimeError("Pesanan gagal dibuat")
+        raise RuntimeError(
+            "Pesanan gagal dibuat"
+        )
 
     return rows[0]
 
@@ -245,8 +336,9 @@ async def get_order(order_id: str):
     return rows[0] if rows else None
 
 
-# Mencari pesanan aktif, termasuk yang sedang menunggu verifikasi.
-async def latest_waiting_order(user_id: str):
+async def latest_waiting_order(
+    user_id: str
+):
     rows = await db_request(
         "GET",
         "orders",
@@ -262,7 +354,26 @@ async def latest_waiting_order(user_id: str):
     return rows[0] if rows else None
 
 
+async def available_inventory_count():
+    rows = await db_request(
+        "GET",
+        "am_inventory",
+        params={
+            "status": "eq.available",
+            "select": "id",
+            "limit": str(MAX_QUANTITY)
+        }
+    )
+
+    return len(rows)
+
+
+# =========================================================
+# MENU UTAMA
+# =========================================================
+
 async def handle_start(chat_id: int):
+
     keyboard = {
         "inline_keyboard": [
             [
@@ -282,7 +393,8 @@ async def handle_start(chat_id: int):
                     "text": "💬 Admin CS",
                     "url": (
                         f"https://t.me/{ADMIN_USERNAME}"
-                        if ADMIN_USERNAME else "https://t.me/"
+                        if ADMIN_USERNAME
+                        else "https://t.me/"
                     )
                 }
             ]
@@ -293,18 +405,48 @@ async def handle_start(chat_id: int):
         chat_id,
         "<b>✨ AM PREMIUM STORE</b>\n\n"
         "Selamat datang di toko AM Premium.\n\n"
-        "🛍️ <b>Produk:</b> AM Premium\n"
+        f"🛍️ <b>Produk:</b> {PRODUCT_NAME}\n"
         f"💰 <b>Harga:</b> Rp{PRICE:,} / akun\n"
         "📦 Pilih menu di bawah untuk mulai memesan.",
         keyboard
     )
 
 
+# =========================================================
+# MENU PEMBELIAN
+# =========================================================
+
 async def handle_buy(chat_id: int):
+
+    try:
+        stock = await available_inventory_count()
+    except Exception:
+        logger.exception(
+            "Gagal membaca stok inventaris"
+        )
+
+        return await send_message(
+            chat_id,
+            "⚠️ Stok sedang tidak dapat diperiksa.\n"
+            "Silakan coba beberapa saat lagi."
+        )
+
+    if stock < MIN_QUANTITY:
+        return await send_message(
+            chat_id,
+            "❌ <b>STOK SEDANG HABIS</b>\n\n"
+            "Silakan hubungi admin untuk informasi stok."
+        )
+
     quick_quantities = [1, 2, 5, 10, 20, 50]
+
     available = [
-        quantity for quantity in quick_quantities
-        if MIN_QUANTITY <= quantity <= MAX_QUANTITY
+        quantity
+        for quantity in quick_quantities
+        if MIN_QUANTITY <= quantity <= min(
+            MAX_QUANTITY,
+            stock
+        )
     ]
 
     buttons = []
@@ -323,43 +465,59 @@ async def handle_buy(chat_id: int):
     if row:
         buttons.append(row)
 
-    buttons.append([{
-        "text": "✍️ Masukkan jumlah lain",
-        "callback_data": "quantity_custom"
-    }])
+    buttons.append([
+        {
+            "text": "✍️ Masukkan jumlah lain",
+            "callback_data": "quantity_custom"
+        }
+    ])
 
-    buttons.append([{
-        "text": "⬅️ Kembali ke Menu",
-        "callback_data": "home"
-    }])
+    buttons.append([
+        {
+            "text": "⬅️ Kembali ke Menu",
+            "callback_data": "home"
+        }
+    ])
 
-    keyboard = {"inline_keyboard": buttons}
+    keyboard = {
+        "inline_keyboard": buttons
+    }
 
     await send_message(
         chat_id,
         "<b>🛒 PEMBELIAN AM PREMIUM</b>\n\n"
         f"💰 Harga per akun: <b>Rp{PRICE:,}</b>\n"
-        f"📦 Minimal pembelian: <b>{MIN_QUANTITY} akun</b>\n"
-        f"📦 Maksimal pembelian: <b>{MAX_QUANTITY} akun</b>\n\n"
-        "Pilih jumlah akun melalui tombol di bawah.\n"
-        "Jika jumlah yang diinginkan tidak tersedia, tekan "
-        "<b>Masukkan jumlah lain</b>.",
+        f"📦 Minimal pembelian: <b>{MIN_QUANTITY}</b>\n"
+        f"📦 Maksimal pembelian: <b>{min(MAX_QUANTITY, stock)}</b>\n"
+        f"📊 Stok tersedia: <b>{stock}</b>\n\n"
+        "Pilih jumlah akun melalui tombol di bawah.",
         keyboard
     )
 
 
+# =========================================================
+# MEMBUAT PESANAN
+# =========================================================
+
 async def handle_quantity(message: dict):
+
     chat_id = message["chat"]["id"]
+
     user = message.get("from", {})
+
     user_id = str(user.get("id", ""))
+
     username = user.get("username", "")
 
-    text = (message.get("text") or "").strip()
+    text = (
+        message.get("text") or ""
+    ).strip()
 
     if not text.isdigit():
         return await send_message(
             chat_id,
-            "Kirim jumlah dalam angka. Contoh: <code>2</code>"
+            "Kirim jumlah dalam angka.\n"
+            "Contoh: <code>2</code>"
         )
 
     quantity = int(text)
@@ -367,31 +525,72 @@ async def handle_quantity(message: dict):
     if quantity < MIN_QUANTITY or quantity > MAX_QUANTITY:
         return await send_message(
             chat_id,
-            f"Jumlah harus antara {MIN_QUANTITY} sampai {MAX_QUANTITY}."
+            f"Jumlah harus antara {MIN_QUANTITY} "
+            f"sampai {MAX_QUANTITY}."
         )
 
-    order = await create_order(user_id, username, quantity)
+    try:
+        stock = await available_inventory_count()
+    except Exception:
+        logger.exception(
+            "Gagal memeriksa stok"
+        )
+
+        return await send_message(
+            chat_id,
+            "⚠️ Tidak dapat memeriksa stok saat ini."
+        )
+
+    if quantity > stock:
+        return await send_message(
+            chat_id,
+            "❌ <b>STOK TIDAK MENCUKUPI</b>\n\n"
+            f"Permintaan: {quantity} akun\n"
+            f"Stok tersedia: {stock} akun\n\n"
+            "Silakan pilih jumlah yang lebih kecil."
+        )
+
+    try:
+        order = await create_order(
+            user_id,
+            username,
+            quantity
+        )
+    except Exception:
+        logger.exception(
+            "Gagal membuat pesanan"
+        )
+
+        return await send_message(
+            chat_id,
+            "⚠️ Pesanan gagal dibuat.\n"
+            "Silakan coba kembali."
+        )
 
     total = int(order["total"])
-    order_id = order["id"]
 
-    # Notifikasi pesanan baru kepada admin.
+    order_id = str(order["id"])
+
+    safe_username = html.escape(
+        username or "Tidak tersedia"
+    )
+
+    # Notifikasi pesanan kepada admin.
     try:
         await send_message(
             ADMIN_ID,
             "<b>🔔 PESANAN BARU AM PREMIUM</b>\n\n"
-            f"🆔 ID Pesanan: <code>{order_id}</code>\n"
-            f"👤 Username: "
-            f"@{username if username else 'Tidak tersedia'}\n"
+            f"🆔 ID Pesanan: <code>{html.escape(order_id)}</code>\n"
+            f"👤 Username: @{safe_username}\n"
             f"🪪 User ID: <code>{user_id}</code>\n"
             f"📦 Jumlah akun: <b>{quantity}</b>\n"
             f"💰 Harga per akun: <b>Rp{PRICE:,}</b>\n"
-            f"🧮 Total pembayaran: <b>Rp{total:,}</b>\n\n"
-            "<i>Status: Menunggu pembayaran dan bukti transfer.</i>"
+            f"🧮 Total: <b>Rp{total:,}</b>\n\n"
+            "<i>Status: Menunggu pembayaran.</i>"
         )
     except Exception:
         logger.exception(
-            "Gagal mengirim notifikasi pesanan baru ke admin"
+            "Gagal mengirim notifikasi pesanan kepada admin"
         )
 
     keyboard = {
@@ -407,7 +606,8 @@ async def handle_quantity(message: dict):
                     "text": "💬 Hubungi Admin",
                     "url": (
                         f"https://t.me/{ADMIN_USERNAME}"
-                        if ADMIN_USERNAME else "https://t.me/"
+                        if ADMIN_USERNAME
+                        else "https://t.me/"
                     )
                 }
             ]
@@ -417,15 +617,15 @@ async def handle_quantity(message: dict):
     await send_message(
         chat_id,
         "<b>🧾 DETAIL PESANAN</b>\n\n"
-        f"🆔 ID Pesanan: <code>{order_id}</code>\n"
+        f"🆔 ID Pesanan: <code>{html.escape(order_id)}</code>\n"
         f"📦 Jumlah akun: <b>{quantity}</b>\n"
         f"💰 Harga per akun: <b>Rp{PRICE:,}</b>\n"
         f"🧮 Total pembayaran: <b>Rp{total:,}</b>\n\n"
         "<b>💳 CARA PEMBAYARAN</b>\n"
-        f"{PAYMENT_INSTRUCTIONS}\n\n"
-        "Silakan lakukan pembayaran sesuai total di atas.\n"
-        "Setelah membayar, tekan tombol <b>Saya Sudah Bayar</b> "
-        "dan kirim foto bukti pembayaran.",
+        f"{html.escape(PAYMENT_INSTRUCTIONS)}\n\n"
+        "Silakan lakukan pembayaran sesuai total.\n"
+        "Setelah membayar, tekan tombol "
+        "<b>Saya Sudah Bayar</b> dan kirim foto bukti pembayaran.",
         keyboard
     )
 
@@ -435,26 +635,36 @@ async def handle_quantity(message: dict):
                 chat_id,
                 PAYMENT_QR_IMAGE_URL,
                 "📷 <b>QRIS PEMBAYARAN</b>\n\n"
-                "Scan QRIS ini dan bayar sesuai total pesanan."
+                "Scan QRIS dan bayar sesuai total pesanan."
             )
         except Exception:
-            logger.exception("Gagal mengirim foto QRIS")
-            await send_message(
-                chat_id,
-                "⚠️ Foto QRIS gagal dikirim. "
-                "Silakan hubungi admin."
+            logger.exception(
+                "Gagal mengirim foto QRIS"
             )
 
 
-# PERBAIKAN: Pemeriksaan status pesanan ketika tombol pembayaran ditekan.
-async def handle_paid(callback: dict, order_id: str):
-    user_id = str(callback["from"]["id"])
+# =========================================================
+# TOMBOL SAYA SUDAH BAYAR
+# =========================================================
+
+async def handle_paid(
+    callback: dict,
+    order_id: str
+):
+
+    user_id = str(
+        callback["from"]["id"]
+    )
+
     chat_id = callback["message"]["chat"]["id"]
 
     order = await get_order(order_id)
 
     if not order:
-        return await send_message(chat_id, "Pesanan tidak ditemukan.")
+        return await send_message(
+            chat_id,
+            "Pesanan tidak ditemukan."
+        )
 
     if str(order["user_id"]) != user_id:
         return await send_message(
@@ -468,43 +678,44 @@ async def handle_paid(callback: dict, order_id: str):
         return await send_message(
             chat_id,
             "✅ <b>BUKTI PEMBAYARAN SUDAH DITERIMA</b>\n\n"
-            f"🆔 ID Pesanan: <code>{order_id}</code>\n"
-            "Bukti pembayaran Anda sedang diperiksa admin.\n"
-            "Mohon tunggu hasil verifikasi."
+            f"ID Pesanan: <code>{html.escape(order_id)}</code>\n"
+            "Bukti pembayaran sedang diperiksa admin."
         )
 
     if status == "rejected":
         return await send_message(
             chat_id,
             "❌ <b>PESANAN DITOLAK</b>\n\n"
-            f"🆔 ID Pesanan: <code>{order_id}</code>\n"
-            "Pembayaran pesanan ini belum diterima oleh admin.\n"
-            "Silakan hubungi admin jika ingin mendapatkan bantuan."
+            "Silakan hubungi admin untuk informasi lebih lanjut."
         )
 
     if status != "waiting_payment":
         return await send_message(
             chat_id,
-            "ℹ️ <b>STATUS PESANAN</b>\n\n"
-            f"🆔 ID Pesanan: <code>{order_id}</code>\n"
-            "Pesanan ini sudah diproses atau tidak lagi "
+            "ℹ️ Pesanan sudah diproses atau tidak "
             "menunggu pembayaran.\n"
-            f"Status saat ini: <code>{status}</code>"
+            f"Status: <code>{html.escape(str(status))}</code>"
         )
 
     await send_message(
         chat_id,
         "📤 <b>KIRIM BUKTI PEMBAYARAN</b>\n\n"
-        "Silakan kirim <b>foto bukti pembayaran</b> di chat ini.\n"
+        "Silakan kirim foto bukti pembayaran di chat ini.\n"
         "Pastikan nominal dan status pembayaran terlihat jelas."
     )
 
 
-# PERBAIKAN: Penerimaan foto dan pencegahan bukti ganda.
+# =========================================================
+# MENERIMA FOTO BUKTI PEMBAYARAN
+# =========================================================
 
 async def handle_photo(message: dict):
+
     chat_id = message["chat"]["id"]
-    user_id = str(message["from"]["id"])
+
+    user_id = str(
+        message["from"]["id"]
+    )
 
     photos = message.get("photo", [])
 
@@ -522,32 +733,29 @@ async def handle_photo(message: dict):
         return await send_message(
             chat_id,
             "Tidak ada pesanan aktif yang menunggu pembayaran.\n\n"
-            "Silakan buat pesanan baru melalui menu /start."
+            "Silakan buat pesanan baru melalui /start."
         )
 
-    order_id = order["id"]
+    order_id = str(order["id"])
+
     status = order.get("status")
 
-    # Jika sudah menunggu verifikasi, coba kirim ulang
-    # bukti yang tersimpan ke admin.
+    # Jika bukti sudah tersimpan, gunakan bukti lama.
     if status == "waiting_review":
-        saved_file_id = order.get("proof_file_id") or file_id
 
-        if not order.get("proof_file_id"):
-            await db_request(
-                "PATCH",
-                "orders",
-                params={
-                    "id": f"eq.{order_id}",
-                    "status": "eq.waiting_review"
-                },
-                body={"proof_file_id": saved_file_id}
+        saved_file_id = order.get("proof_file_id")
+
+        if not saved_file_id:
+            return await send_message(
+                chat_id,
+                "Bukti sebelumnya belum tercatat dengan benar. "
+                "Silakan hubungi admin."
             )
 
         file_id = saved_file_id
 
     elif status == "waiting_payment":
-        # Ubah status hanya jika masih menunggu pembayaran.
+
         updated_rows = await db_request(
             "PATCH",
             "orders",
@@ -563,31 +771,35 @@ async def handle_photo(message: dict):
         )
 
         if not updated_rows:
-            latest_order = await get_order(str(order_id))
+            latest = await get_order(order_id)
 
-            if not latest_order:
-                return await send_message(
-                    chat_id,
-                    "Pesanan tidak ditemukan."
-                )
-
-            if latest_order.get("status") == "waiting_review":
-                file_id = latest_order.get("proof_file_id") or file_id
-                order = latest_order
+            if (
+                latest
+                and latest.get("status") == "waiting_review"
+                and latest.get("proof_file_id")
+            ):
+                order = latest
+                file_id = latest["proof_file_id"]
             else:
                 return await send_message(
                     chat_id,
-                    "Status pesanan berubah. Silakan hubungi admin."
+                    "Status pesanan berubah. "
+                    "Silakan hubungi admin."
                 )
+
         else:
             order = updated_rows[0]
 
     else:
         return await send_message(
             chat_id,
-            "Pesanan ini tidak sedang menunggu pembayaran.\n"
-            "Silakan hubungi admin jika status pesanan tidak sesuai."
+            "Pesanan tidak sedang menunggu pembayaran."
         )
+
+    username = (
+        message.get("from", {}).get("username")
+        or "Tidak tersedia"
+    )
 
     keyboard = {
         "inline_keyboard": [
@@ -609,154 +821,145 @@ async def handle_photo(message: dict):
             ADMIN_ID,
             file_id,
             "<b>🔔 BUKTI PEMBAYARAN AM PREMIUM</b>\n\n"
-            f"🆔 ID Pesanan: <code>{order_id}</code>\n"
-            f"👤 Username: "
-            f"@{message.get('from', {}).get('username', 'Tidak tersedia')}\n"
+            f"🆔 ID Pesanan: <code>{html.escape(order_id)}</code>\n"
+            f"👤 Username: @{html.escape(username)}\n"
             f"🪪 User ID: <code>{user_id}</code>\n"
             f"📦 Jumlah akun: <b>{order['quantity']}</b>\n"
-            f"💰 Total pembayaran: "
-            f"<b>Rp{int(order['total']):,}</b>\n\n"
-            "<i>Silakan periksa bukti transfer sebelum memilih keputusan.</i>",
+            f"💰 Total: <b>Rp{int(order['total']):,}</b>\n\n"
+            "<i>Periksa pembayaran sebelum mengambil keputusan.</i>",
             keyboard
         )
 
-    except Exception as e:
-        logger.exception(
-            "Gagal mengirim bukti ke admin. Order ID: %s",
-            order_id
-        )
-
-        return await send_message(
-            chat_id,
-            "⚠️ <b>Bukti transfer sudah tersimpan.</b>\n\n"
-            "Namun bot belum berhasil mengirim notifikasi ke admin.\n"
-            "Silakan pastikan admin sudah menekan /start pada bot.\n\n"
-            "Anda boleh kirim ulang foto bukti transfer untuk "
-            "mencoba mengirim notifikasi kembali."
-        )
-
-    await send_message(
-        chat_id,
-        "✅ <b>Bukti pembayaran berhasil dikirim.</b>\n\n"
-        "Bukti sudah diteruskan kepada admin.\n"
-        "Admin akan memeriksa pembayaran Anda.\n"
-        "Mohon tunggu verifikasi."
-    )
-
-
-    if status != "waiting_payment":
-        return await send_message(
-            chat_id,
-            "Pesanan ini tidak sedang menunggu pembayaran.\n"
-            "Silakan hubungi admin jika status pesanan tidak sesuai."
-        )
-
-    # Update hanya jika status masih waiting_payment.
-    updated_rows = await db_request(
-        "PATCH",
-        "orders",
-        params={
-            "id": f"eq.{order_id}",
-            "user_id": f"eq.{user_id}",
-            "status": "eq.waiting_payment"
-        },
-        body={
-            "status": "waiting_review",
-            "proof_file_id": file_id
-        }
-    )
-
-    # Jika update tidak berhasil, periksa status terbaru.
-    if not updated_rows:
-        latest_order = await get_order(str(order_id))
-
-        if latest_order and latest_order.get("status") == "waiting_review":
-            return await send_message(
-                chat_id,
-                "✅ <b>BUKTI PEMBAYARAN SUDAH DITERIMA</b>\n\n"
-                "Pesanan Anda sedang diperiksa admin.\n"
-                "Mohon tunggu verifikasi."
-            )
-
-        return await send_message(
-            chat_id,
-            "⚠️ Status pesanan berubah sehingga bukti belum dapat "
-            "diproses. Silakan hubungi admin."
-        )
-
-    # Gunakan data hasil update.
-    order = updated_rows[0]
-
-    keyboard = {
-        "inline_keyboard": [
-            [
-                {
-                    "text": "💰 DANA MASUK",
-                    "callback_data": f"approve_{order_id}"
-                },
-                {
-                    "text": "❌ DANA TIDAK MASUK",
-                    "callback_data": f"reject_{order_id}"
-                }
-            ]
-        ]
-    }
-
-    try:
-        await send_photo(
-            ADMIN_ID,
-            file_id,
-            "<b>🔔 BUKTI PEMBAYARAN BARU</b>\n\n"
-            f"🆔 ID Pesanan: <code>{order_id}</code>\n"
-            f"👤 Username: "
-            f"@{message.get('from', {}).get('username', 'Tidak tersedia')}\n"
-            f"🪪 User ID: <code>{user_id}</code>\n"
-            f"📦 Jumlah akun: <b>{order['quantity']}</b>\n"
-            f"💰 Total pembayaran: "
-            f"<b>Rp{int(order['total']):,}</b>\n\n"
-            "<i>Silakan periksa bukti transfer sebelum memilih keputusan.</i>",
-            keyboard
-        )
     except Exception:
         logger.exception(
-            "Gagal mengirim bukti transfer ke admin untuk pesanan %s",
+            "Gagal mengirim bukti kepada admin: %s",
             order_id
         )
 
-        await send_message(
+        return await send_message(
             chat_id,
-            "⚠️ Bukti tersimpan, tetapi notifikasi ke admin gagal dikirim.\n"
-            "Silakan hubungi admin agar bukti Anda diperiksa."
+            "⚠️ <b>Bukti pembayaran sudah tersimpan.</b>\n\n"
+            "Namun notifikasi ke admin gagal dikirim.\n"
+            "Silakan hubungi admin agar bukti diperiksa."
         )
-        raise
 
     await send_message(
         chat_id,
-        "✅ <b>Bukti pembayaran berhasil dikirim.</b>\n\n"
-        "Admin akan memeriksa pembayaran Anda.\n"
-        "Mohon tunggu verifikasi."
+        "✅ <b>BUKTI PEMBAYARAN BERHASIL DIKIRIM</b>\n\n"
+        "Bukti sudah diteruskan kepada admin.\n"
+        "Mohon tunggu verifikasi pembayaran."
     )
 
 
-async def handle_admin_decision(callback: dict, approve: bool, order_id: str):
-    admin_id = str(callback["from"]["id"])
+# =========================================================
+# PENGIRIMAN DATA AKUN KEPADA PEMBELI
+# =========================================================
+
+async def send_order_accounts(
+    user_id: str,
+    order_id: str,
+    accounts: list
+):
+    if not accounts:
+        raise RuntimeError(
+            "Data akun kosong"
+        )
+
+    await send_message(
+        user_id,
+        "<b>✅ PEMBAYARAN BERHASIL DIVERIFIKASI</b>\n\n"
+        f"🆔 ID Pesanan: <code>{html.escape(order_id)}</code>\n"
+        f"📦 Jumlah akun: <b>{len(accounts)}</b>\n\n"
+        "Berikut detail akun AM Premium Anda."
+    )
+
+    # Maksimal 8 akun dalam satu pesan.
+    for start in range(0, len(accounts), 8):
+
+        chunk = accounts[start:start + 8]
+
+        lines = []
+
+        for index, item in enumerate(chunk, start=start + 1):
+
+            email = html.escape(
+                str(item.get("email", ""))
+            )
+
+            login_url = html.escape(
+                str(item.get("login_url", "")),
+                quote=True
+            )
+
+            expiry = html.escape(
+                str(item.get("expiry", ""))
+            )
+
+            lines.append(
+                f"<b>📦 AKUN {index}</b>\n"
+                f"📧 Email: <code>{email}</code>\n"
+                f"🌐 Login: {login_url}\n"
+                f"📅 Berlaku sampai: <b>{expiry}</b>"
+            )
+
+        await send_message(
+            user_id,
+            "<b>DETAIL AKUN AM PREMIUM</b>\n\n"
+            + "\n\n".join(lines)
+        )
+
+    await send_message(
+        user_id,
+        "🎉 <b>PESANAN SELESAI</b>\n\n"
+        "Seluruh data akun telah dikirim.\n"
+        "Terima kasih telah berbelanja."
+    )
+
+
+# =========================================================
+# ADMIN: DANA MASUK / DANA TIDAK MASUK
+# =========================================================
+
+async def handle_admin_decision(
+    callback: dict,
+    approve: bool,
+    order_id: str
+):
+
+    admin_id = str(
+        callback["from"]["id"]
+    )
+
     chat_id = callback["message"]["chat"]["id"]
 
+    # Validasi ID admin.
     if admin_id != ADMIN_ID:
-        return await send_message(chat_id, "⛔ Akses ditolak.")
+        return await send_message(
+            chat_id,
+            "⛔ Akses ditolak. Anda bukan admin."
+        )
 
     order = await get_order(order_id)
 
     if not order:
-        return await send_message(chat_id, "Pesanan tidak ditemukan.")
-
-    if order["status"] != "waiting_review":
         return await send_message(
             chat_id,
-            "Pesanan sudah diproses atau tidak menunggu verifikasi."
+            "Pesanan tidak ditemukan."
         )
 
+    # =====================================================
+    # DANA TIDAK MASUK
+    # =====================================================
+
     if not approve:
+
+        if order.get("status") != "waiting_review":
+            return await send_message(
+                chat_id,
+                "Pesanan sudah diproses atau "
+                "tidak menunggu verifikasi."
+            )
+
         updated_rows = await db_request(
             "PATCH",
             "orders",
@@ -764,79 +967,170 @@ async def handle_admin_decision(callback: dict, approve: bool, order_id: str):
                 "id": f"eq.{order_id}",
                 "status": "eq.waiting_review"
             },
-            body={"status": "rejected"}
+            body={
+                "status": "rejected"
+            }
         )
 
         if not updated_rows:
             return await send_message(
                 chat_id,
-                "Pesanan sudah berubah status atau sudah diproses."
+                "Pesanan sudah berubah status."
             )
 
         await send_message(
             order["user_id"],
-            "❌ <b>PEMBAYARAN BELUM DITERIMA</b>\n\n"
-            f"🆔 ID Pesanan: <code>{order_id}</code>\n"
-            "Admin belum menerima pembayaran untuk pesanan ini.\n\n"
-            "Silakan periksa kembali pembayaran atau hubungi admin."
+            "<b>❌ PEMBAYARAN BELUM DITERIMA</b>\n\n"
+            f"🆔 ID Pesanan: <code>{html.escape(order_id)}</code>\n"
+            "Admin belum menerima pembayaran.\n"
+            "Silakan hubungi admin jika ada kesalahan."
         )
 
         return await send_message(
             chat_id,
-            f"❌ Pesanan <code>{order_id}</code> "
-            "ditandai DANA TIDAK MASUK."
+            "❌ <b>DANA TIDAK MASUK</b>\n\n"
+            f"ID Pesanan: <code>{html.escape(order_id)}</code>\n"
+            "Status pesanan berhasil diperbarui."
         )
 
-    result = await db_rpc(
-        "approve_order",
-        {"p_order_id": order_id}
-    )
+    # =====================================================
+    # DANA MASUK
+    # =====================================================
 
-    if not result or not result.get("success"):
-        reason = (
-            result.get("message", "Stok tidak tersedia")
-            if result else "Proses gagal"
+    try:
+
+        result = await db_rpc(
+            "approve_order_from_inventory",
+            {
+                "p_order_id": str(order_id)
+            }
         )
-        return await send_message(chat_id, f"❌ {reason}")
+
+        # Antisipasi hasil RPC berbentuk list.
+        if isinstance(result, list):
+            result = result[0] if result else None
+
+    except Exception:
+        logger.exception(
+            "RPC alokasi inventaris gagal: %s",
+            order_id
+        )
+
+        return await send_message(
+            chat_id,
+            "⚠️ <b>GAGAL MEMPROSES PESANAN</b>\n\n"
+            "Database tidak berhasil mengalokasikan stok.\n"
+            "Silakan periksa log Vercel dan Supabase."
+        )
+
+    if not isinstance(result, dict):
+        return await send_message(
+            chat_id,
+            "⚠️ Respons database tidak valid."
+        )
+
+    if not result.get("success"):
+
+        reason = result.get(
+            "message",
+            "Proses persetujuan gagal"
+        )
+
+        return await send_message(
+            chat_id,
+            "❌ <b>GAGAL MEMPROSES PESANAN</b>\n\n"
+            f"{html.escape(str(reason))}"
+        )
 
     accounts = result.get("accounts", [])
 
     if not accounts:
         return await send_message(
             chat_id,
-            "Pesanan diproses tetapi data stok kosong. Periksa database."
+            "⚠️ Data akun kosong.\n"
+            "Silakan periksa tabel am_inventory."
         )
 
-    delivery = "\n".join(
-        f"{index + 1}. <code>{item}</code>"
-        for index, item in enumerate(accounts)
-    )
+    # Pastikan jumlah akun sesuai pesanan.
+    if len(accounts) != int(order["quantity"]):
+        logger.error(
+            "Jumlah akun tidak sesuai. Order=%s",
+            order_id
+        )
 
-    await send_message(
-        order["user_id"],
-        "<b>✅ PEMBAYARAN DISETUJUI</b>\n\n"
-        f"🆔 ID Pesanan: <code>{order_id}</code>\n"
-        f"📦 Jumlah akun: <b>{len(accounts)}</b>\n\n"
-        "<b>📦 DATA PESANAN:</b>\n"
-        f"{delivery}\n\n"
-        "Terima kasih telah melakukan pembelian."
-    )
+        return await send_message(
+            chat_id,
+            "⚠️ Jumlah akun yang dialokasikan tidak sesuai "
+            "dengan jumlah pesanan. Hubungi pengelola."
+        )
 
-    await send_message(
+    # =====================================================
+    # KIRIM AKUN KE PEMBELI
+    # =====================================================
+
+    try:
+
+        await send_order_accounts(
+            str(order["user_id"]),
+            order_id,
+            accounts
+        )
+
+    except Exception:
+
+        logger.exception(
+            "Pengiriman akun gagal untuk order %s",
+            order_id
+        )
+
+        return await send_message(
+            chat_id,
+            "⚠️ <b>STOK SUDAH DIALOKASIKAN</b>\n\n"
+            f"ID Pesanan: <code>{html.escape(order_id)}</code>\n"
+            "Namun pengiriman Telegram kepada pembeli gagal.\n\n"
+            "Data alokasi tetap tersimpan di Supabase. "
+            "Jangan membuat alokasi stok baru untuk pesanan ini.\n"
+            "Periksa koneksi Telegram dan lakukan pengiriman ulang "
+            "dengan prosedur pemulihan."
+        )
+
+    # =====================================================
+    # KONFIRMASI ADMIN
+    # =====================================================
+
+    return await send_message(
         chat_id,
         "✅ <b>DANA MASUK - PESANAN BERHASIL</b>\n\n"
-        f"🆔 ID Pesanan: <code>{order_id}</code>\n"
-        f"📦 Jumlah akun dikirim: <b>{len(accounts)}</b>\n"
-        "Data pesanan berhasil dikirim kepada pembeli."
+        f"🆔 ID Pesanan: <code>{html.escape(order_id)}</code>\n"
+        f"📦 Jumlah akun: <b>{len(accounts)}</b>\n"
+        "📨 Data akun berhasil dikirim kepada pembeli.\n"
+        "📌 Status: <b>COMPLETED</b>"
     )
 
 
-async def handle_callback(callback: dict):
-    callback_id = callback["id"]
-    data = callback.get("data", "")
-    chat_id = callback["message"]["chat"]["id"]
+# =========================================================
+# CALLBACK BUTTON HANDLER
+# =========================================================
 
-    await answer_callback(callback_id, "Diproses...")
+async def handle_callback(callback: dict):
+
+    callback_id = callback["id"]
+
+    data = callback.get("data", "")
+
+    message = callback.get("message") or {}
+
+    chat_id = message.get("chat", {}).get("id")
+
+    try:
+        await answer_callback(
+            callback_id,
+            "Diproses..."
+        )
+    except Exception:
+        logger.exception(
+            "Gagal menjawab callback Telegram"
+        )
 
     if data == "buy":
         return await handle_buy(chat_id)
@@ -848,15 +1142,20 @@ async def handle_callback(callback: dict):
         return await send_message(
             chat_id,
             "✍️ <b>MASUKKAN JUMLAH AKUN</b>\n\n"
-            f"Ketik jumlah antara {MIN_QUANTITY} sampai {MAX_QUANTITY}.\n"
+            f"Ketik jumlah antara {MIN_QUANTITY} "
+            f"sampai {MAX_QUANTITY}.\n"
             "Contoh: <code>3</code>"
         )
 
     if data.startswith("quantity_"):
+
         quantity = data[len("quantity_"):]
 
         if not quantity.isdigit():
-            return await send_message(chat_id, "Jumlah tidak valid.")
+            return await send_message(
+                chat_id,
+                "Jumlah tidak valid."
+            )
 
         synthetic_message = {
             "chat": {"id": chat_id},
@@ -864,25 +1163,44 @@ async def handle_callback(callback: dict):
             "text": quantity
         }
 
-        return await handle_quantity(synthetic_message)
+        return await handle_quantity(
+            synthetic_message
+        )
 
     if data.startswith("paid_"):
-        return await handle_paid(callback, data[5:])
+
+        return await handle_paid(
+            callback,
+            data[5:]
+        )
 
     if data.startswith("approve_"):
+
         return await handle_admin_decision(
-            callback, True, data[8:]
+            callback,
+            True,
+            data[8:]
         )
 
     if data.startswith("reject_"):
+
         return await handle_admin_decision(
-            callback, False, data[7:]
+            callback,
+            False,
+            data[7:]
         )
 
 
+# =========================================================
+# PROCESS TELEGRAM UPDATE
+# =========================================================
+
 async def process_update(update: dict):
+
     if "callback_query" in update:
-        return await handle_callback(update["callback_query"])
+        return await handle_callback(
+            update["callback_query"]
+        )
 
     message = update.get("message")
 
@@ -892,50 +1210,76 @@ async def process_update(update: dict):
     if message.get("photo"):
         return await handle_photo(message)
 
-    text = (message.get("text") or "").strip()
+    text = (
+        message.get("text") or ""
+    ).strip()
+
+    chat_id = message["chat"]["id"]
 
     if text.startswith("/start"):
-        return await handle_start(message["chat"]["id"])
+        return await handle_start(chat_id)
 
     if text.startswith("/beli"):
-        return await handle_buy(message["chat"]["id"])
+        return await handle_buy(chat_id)
 
     if text.isdigit():
         return await handle_quantity(message)
 
 
+# =========================================================
+# HEALTH CHECK
+# =========================================================
+
 @app.get("/")
 async def home():
+
     return {
         "ok": True,
-        "message": "AM Premium Bot API aktif"
+        "message": "AM Premium Bot API aktif",
+        "product": PRODUCT_NAME
     }
 
+
+@app.get("/api/telegram")
+async def telegram_test():
+
+    return {
+        "ok": True,
+        "message": "Endpoint Telegram aktif"
+    }
+
+
+# =========================================================
+# TELEGRAM WEBHOOK
+# =========================================================
 
 @app.post("/")
 @app.post("/api/telegram")
 async def telegram_webhook(request: Request):
+
     received_secret = request.headers.get(
-        "X-Telegram-Bot-Api-Secret-Token", ""
+        "X-Telegram-Bot-Api-Secret-Token",
+        ""
     ).strip()
 
-    logger.info(
-        "Webhook masuk; secret_header_present=%s; secret_match=%s",
-        bool(received_secret),
-        bool(BOT_SECRET) and hmac.compare_digest(
-            received_secret, BOT_SECRET
-        )
-    )
-
     if not BOT_SECRET:
-        logger.error("BOT_WEBHOOK_SECRET belum diatur")
+        logger.error(
+            "BOT_WEBHOOK_SECRET belum diatur"
+        )
+
         raise HTTPException(
             status_code=500,
             detail="BOT_WEBHOOK_SECRET belum diatur"
         )
 
-    if not hmac.compare_digest(received_secret, BOT_SECRET):
-        logger.warning("Webhook secret tidak cocok")
+    if not hmac.compare_digest(
+        received_secret,
+        BOT_SECRET
+    ):
+        logger.warning(
+            "Webhook secret tidak cocok"
+        )
+
         raise HTTPException(
             status_code=403,
             detail="Forbidden"
@@ -944,30 +1288,47 @@ async def telegram_webhook(request: Request):
     update_id = None
 
     try:
+
         update = await request.json()
+
         update_id = update.get("update_id")
 
         # Cegah update Telegram yang sama diproses dua kali.
         if update_id is not None:
-            is_new = await claim_telegram_update(int(update_id))
+
+            is_new = await claim_telegram_update(
+                int(update_id)
+            )
 
             if not is_new:
                 logger.info(
                     "Update duplikat diabaikan: %s",
                     update_id
                 )
-                return JSONResponse({"ok": True})
+
+                return JSONResponse({
+                    "ok": True
+                })
 
         await process_update(update)
 
-        return JSONResponse({"ok": True})
+        return JSONResponse({
+            "ok": True
+        })
 
     except Exception:
-        logger.exception("Gagal memproses update Telegram")
+
+        logger.exception(
+            "Gagal memproses update Telegram"
+        )
 
         if update_id is not None:
+
             try:
-                await release_telegram_update(int(update_id))
+                await release_telegram_update(
+                    int(update_id)
+                )
+
             except Exception:
                 logger.exception(
                     "Gagal menghapus klaim update: %s",
