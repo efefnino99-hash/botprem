@@ -389,11 +389,19 @@ async def handle_quantity(message: dict):
     )
 
     if PAYMENT_QR_IMAGE_URL:
+    try:
         await send_photo(
             chat_id,
             PAYMENT_QR_IMAGE_URL,
             "📷 <b>QRIS PEMBAYARAN</b>\n\n"
             "Scan QRIS ini dan bayar sesuai total pesanan."
+        )
+    except Exception:
+        logger.exception("Gagal mengirim foto QRIS")
+        await send_message(
+            chat_id,
+            "⚠️ Foto QRIS gagal dikirim. "
+            "Silakan hubungi admin."
         )
 
 
