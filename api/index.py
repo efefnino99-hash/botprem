@@ -195,7 +195,6 @@ async def db_rpc(function_name: str, body: dict):
     return response.json()
 
 
-# Fungsi untuk mencegah update Telegram diproses dua kali.
 async def claim_telegram_update(update_id: int) -> bool:
     result = await db_rpc(
         "claim_telegram_update",
@@ -204,7 +203,6 @@ async def claim_telegram_update(update_id: int) -> bool:
     return result is True
 
 
-# Fungsi untuk melepas klaim update jika pemrosesan gagal.
 async def release_telegram_update(update_id: int):
     return await db_rpc(
         "release_telegram_update",
@@ -377,6 +375,25 @@ async def handle_quantity(message: dict):
     total = int(order["total"])
     order_id = order["id"]
 
+    # Notifikasi pesanan baru kepada admin.
+    try:
+        await send_message(
+            ADMIN_ID,
+            "<b>🔔 PESANAN BARU AM PREMIUM</b>\n\n"
+            f"🆔 ID Pesanan: <code>{order_id}</code>\n"
+            f"👤 Username: "
+            f"@{username if username else 'Tidak tersedia'}\n"
+            f"🪪 User ID: <code>{user_id}</code>\n"
+            f"📦 Jumlah akun: <b>{quantity}</b>\n"
+            f"💰 Harga per akun: <b>Rp{PRICE:,}</b>\n"
+            f"🧮 Total pembayaran: <b>Rp{total:,}</b>\n\n"
+            "<i>Status: Menunggu pembayaran dan bukti transfer.</i>"
+        )
+    except Exception:
+        logger.exception(
+            "Gagal mengirim notifikasi pesanan baru ke admin"
+        )
+
     keyboard = {
         "inline_keyboard": [
             [
@@ -491,11 +508,11 @@ async def handle_photo(message: dict):
         "inline_keyboard": [
             [
                 {
-                    "text": "✅ Setujui",
+                    "text": "💰 DANA MASUK",
                     "callback_data": f"approve_{order['id']}"
                 },
                 {
-                    "text": "❌ Tolak",
+                    "text": "❌ DANA TIDAK MASUK",
                     "callback_data": f"reject_{order['id']}"
                 }
             ]
@@ -506,10 +523,14 @@ async def handle_photo(message: dict):
         ADMIN_ID,
         file_id,
         "<b>🔔 BUKTI PEMBAYARAN BARU</b>\n\n"
-        f"🆔 ID: <code>{order['id']}</code>\n"
-        f"👤 User ID: <code>{user_id}</code>\n"
-        f"📦 Jumlah: <b>{order['quantity']}</b>\n"
-        f"💰 Total: <b>Rp{int(order['total']):,}</b>",
+        f"🆔 ID Pesanan: <code>{order['id']}</code>\n"
+        f"👤 Username: "
+        f"@{message.get('from', {}).get('username', 'Tidak tersedia')}\n"
+        f"🪪 User ID: <code>{user_id}</code>\n"
+        f"📦 Jumlah akun: <b>{order['quantity']}</b>\n"
+        f"💰 Total pembayaran: "
+        f"<b>Rp{int(order['total']):,}</b>\n\n"
+        "<i>Silakan periksa bukti transfer sebelum memilih keputusan.</i>",
         keyboard
     )
 
@@ -552,11 +573,17 @@ async def handle_admin_decision(callback: dict, approve: bool, order_id: str):
 
         await send_message(
             order["user_id"],
-            "❌ <b>Pembayaran ditolak oleh admin.</b>\n\n"
-            "Silakan hubungi admin jika ada pertanyaan."
+            "❌ <b>PEMBAYARAN BELUM DITERIMA</b>\n\n"
+            f"🆔 ID Pesanan: <code>{order_id}</code>\n"
+            "Admin belum menerima pembayaran untuk pesanan ini.\n\n"
+            "Silakan periksa kembali pembayaran atau hubungi admin."
         )
 
-        return await send_message(chat_id, "Pesanan berhasil ditolak.")
+        return await send_message(
+            chat_id,
+            f"❌ Pesanan <code>{order_id}</code> "
+            "ditandai DANA TIDAK MASUK."
+        )
 
     result = await db_rpc(
         "approve_order",
@@ -595,7 +622,10 @@ async def handle_admin_decision(callback: dict, approve: bool, order_id: str):
 
     await send_message(
         chat_id,
-        f"✅ Pesanan <code>{order_id}</code> berhasil disetujui dan stok dikirim."
+        "✅ <b>DANA MASUK - PESANAN BERHASIL</b>\n\n"
+        f"🆔 ID Pesanan: <code>{order_id}</code>\n"
+        f"📦 Jumlah akun dikirim: <b>{len(accounts)}</b>\n"
+        "Data pesanan berhasil dikirim kepada pembeli."
     )
 
 
