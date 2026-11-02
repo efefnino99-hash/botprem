@@ -26,7 +26,7 @@ ADMIN_ID = str(os.getenv("TELEGRAM_ADMIN_ID", "392836663")).strip()
 SUPABASE_URL = os.getenv("SUPABASE_URL", "").rstrip("/")
 SUPABASE_KEY = os.getenv("SUPABASE_SERVICE_ROLE_KEY", "").strip()
 
-PRICE = int(os.getenv("PRICE_PER_UNIT", "10000"))
+PRICE = int(os.getenv("PRICE_PER_UNIT", "5000"))
 MIN_QUANTITY = int(os.getenv("MIN_QUANTITY", "1"))
 MAX_QUANTITY = int(os.getenv("MAX_QUANTITY", "100"))
 
@@ -272,21 +272,57 @@ async def handle_start(chat_id: int):
     await send_message(
         chat_id,
         "<b>✨ AM PREMIUM STORE</b>\n\n"
-        "Selamat datang di toko AM Premium.\n"
-        "Silakan pilih menu di bawah ini.",
+        "Selamat datang di toko AM Premium.\n\n"
+        "🛍️ <b>Produk:</b> AM Premium\n"
+        f"💰 <b>Harga:</b> Rp{PRICE:,} / akun\n"
+        "📦 Pilih menu di bawah untuk mulai memesan.",
         keyboard
     )
 
 
 async def handle_buy(chat_id: int):
+    # Quick-pick quantities; only display options within configured limits.
+    quick_quantities = [1, 2, 5, 10, 20, 50]
+    available = [
+        quantity for quantity in quick_quantities
+        if MIN_QUANTITY <= quantity <= MAX_QUANTITY
+    ]
+
+    buttons = []
+    row = []
+    for quantity in available:
+        row.append({
+            "text": f"{quantity} akun",
+            "callback_data": f"quantity_{quantity}"
+        })
+        if len(row) == 3:
+            buttons.append(row)
+            row = []
+
+    if row:
+        buttons.append(row)
+
+    buttons.append([{
+        "text": "✍️ Masukkan jumlah lain",
+        "callback_data": "quantity_custom"
+    }])
+    buttons.append([{
+        "text": "⬅️ Kembali ke Menu",
+        "callback_data": "home"
+    }])
+
+    keyboard = {"inline_keyboard": buttons}
+
     await send_message(
         chat_id,
         "<b>🛒 PEMBELIAN AM PREMIUM</b>\n\n"
-        f"Harga: <b>Rp{PRICE:,}</b> / unit\n"
-        f"Minimal: <b>{MIN_QUANTITY}</b>\n"
-        f"Maksimal: <b>{MAX_QUANTITY}</b>\n\n"
-        "Kirim jumlah yang ingin dibeli.\n"
-        "Contoh: <code>2</code>"
+        f"💰 Harga per akun: <b>Rp{PRICE:,}</b>\n"
+        f"📦 Minimal pembelian: <b>{MIN_QUANTITY} akun</b>\n"
+        f"📦 Maksimal pembelian: <b>{MAX_QUANTITY} akun</b>\n\n"
+        "Pilih jumlah akun melalui tombol di bawah.\n"
+        "Jika jumlah yang diinginkan tidak tersedia, tekan "
+        "<b>Masukkan jumlah lain</b>.",
+        keyboard
     )
 
 
@@ -324,6 +360,15 @@ async def handle_quantity(message: dict):
                     "text": "📤 Saya Sudah Bayar",
                     "callback_data": f"paid_{order_id}"
                 }
+            ],
+            [
+                {
+                    "text": "💬 Hubungi Admin",
+                    "url": (
+                        f"https://t.me/{ADMIN_USERNAME}"
+                        if ADMIN_USERNAME else "https://t.me/"
+                    )
+                }
             ]
         ]
     }
@@ -331,12 +376,15 @@ async def handle_quantity(message: dict):
     await send_message(
         chat_id,
         "<b>🧾 DETAIL PESANAN</b>\n\n"
-        f"ID Pesanan: <code>{order_id}</code>\n"
-        f"Jumlah: <b>{quantity}</b>\n"
-        f"Total: <b>Rp{total:,}</b>\n\n"
+        f"🆔 ID Pesanan: <code>{order_id}</code>\n"
+        f"📦 Jumlah akun: <b>{quantity}</b>\n"
+        f"💰 Harga per akun: <b>Rp{PRICE:,}</b>\n"
+        f"🧮 Total pembayaran: <b>Rp{total:,}</b>\n\n"
+        "<b>💳 CARA PEMBAYARAN</b>\n"
         f"{PAYMENT_INSTRUCTIONS}\n\n"
-        "Silakan lakukan pembayaran. Setelah itu tekan tombol "
-        "<b>Saya Sudah Bayar</b> dan kirim foto bukti pembayaran.",
+        "Silakan lakukan pembayaran sesuai total di atas.\n"
+        "Setelah membayar, tekan tombol <b>Saya Sudah Bayar</b> "
+        "dan kirim foto bukti pembayaran.",
         keyboard
     )
 
@@ -344,7 +392,8 @@ async def handle_quantity(message: dict):
         await send_photo(
             chat_id,
             PAYMENT_QR_IMAGE_URL,
-            "📷 Scan QRIS untuk melakukan pembayaran."
+            "📷 <b>QRIS PEMBAYARAN</b>\n\n"
+            "Scan QRIS ini dan bayar sesuai total pesanan."
         )
 
 
@@ -371,7 +420,9 @@ async def handle_paid(callback: dict, order_id: str):
 
     await send_message(
         chat_id,
-        "Silakan kirim <b>foto bukti pembayaran</b> di chat ini."
+        "📤 <b>KIRIM BUKTI PEMBAYARAN</b>\n\n"
+        "Silakan kirim <b>foto bukti pembayaran</b> di chat ini.\n"
+        "Pastikan nominal dan status pembayaran terlihat jelas."
     )
 
 
@@ -423,17 +474,18 @@ async def handle_photo(message: dict):
         ADMIN_ID,
         file_id,
         "<b>🔔 BUKTI PEMBAYARAN BARU</b>\n\n"
-        f"ID: <code>{order['id']}</code>\n"
-        f"User ID: <code>{user_id}</code>\n"
-        f"Jumlah: <b>{order['quantity']}</b>\n"
-        f"Total: <b>Rp{int(order['total']):,}</b>",
+        f"🆔 ID: <code>{order['id']}</code>\n"
+        f"👤 User ID: <code>{user_id}</code>\n"
+        f"📦 Jumlah: <b>{order['quantity']}</b>\n"
+        f"💰 Total: <b>Rp{int(order['total']):,}</b>",
         keyboard
     )
 
     await send_message(
         chat_id,
-        "✅ Bukti pembayaran berhasil dikirim.\n"
-        "Silakan tunggu verifikasi admin."
+        "✅ <b>Bukti pembayaran berhasil dikirim.</b>\n\n"
+        "Admin akan memeriksa pembayaran Anda.\n"
+        "Mohon tunggu verifikasi."
     )
 
 
@@ -468,7 +520,7 @@ async def handle_admin_decision(callback: dict, approve: bool, order_id: str):
 
         await send_message(
             order["user_id"],
-            "❌ Pembayaran ditolak oleh admin.\n"
+            "❌ <b>Pembayaran ditolak oleh admin.</b>\n\n"
             "Silakan hubungi admin jika ada pertanyaan."
         )
 
@@ -499,9 +551,9 @@ async def handle_admin_decision(callback: dict, approve: bool, order_id: str):
     await send_message(
         order["user_id"],
         "<b>✅ PEMBAYARAN DISETUJUI</b>\n\n"
-        f"ID Pesanan: <code>{order_id}</code>\n"
-        f"Jumlah: <b>{len(accounts)}</b>\n\n"
-        "<b>DATA PESANAN:</b>\n"
+        f"🆔 ID Pesanan: <code>{order_id}</code>\n"
+        f"📦 Jumlah akun: <b>{len(accounts)}</b>\n\n"
+        "<b>📦 DATA PESANAN:</b>\n"
         f"{delivery}\n\n"
         "Terima kasih telah melakukan pembelian."
     )
@@ -521,6 +573,30 @@ async def handle_callback(callback: dict):
 
     if data == "buy":
         return await handle_buy(chat_id)
+
+    if data == "home":
+        return await handle_start(chat_id)
+
+    if data == "quantity_custom":
+        return await send_message(
+            chat_id,
+            "✍️ <b>MASUKKAN JUMLAH AKUN</b>\n\n"
+            f"Ketik jumlah antara {MIN_QUANTITY} sampai {MAX_QUANTITY}.\n"
+            "Contoh: <code>3</code>"
+        )
+
+    if data.startswith("quantity_"):
+        quantity = data[len("quantity_"):]
+        if not quantity.isdigit():
+            return await send_message(chat_id, "Jumlah tidak valid.")
+
+        # Reuse the existing order-creation/validation function.
+        synthetic_message = {
+            "chat": {"id": chat_id},
+            "from": callback.get("from", {}),
+            "text": quantity
+        }
+        return await handle_quantity(synthetic_message)
 
     if data.startswith("paid_"):
         return await handle_paid(callback, data[5:])
@@ -604,4 +680,4 @@ async def telegram_webhook(request: Request):
         return JSONResponse(
             {"ok": False, "error": "Internal server error"},
             status_code=500
-        )
+    )
